@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
+import { db } from '../firebase';
+import { ref, onValue, set, onDisconnect, push } from 'firebase/database';
 
 const BROADCASTER_ID = 'rcn-ghana-main-stream';
 
@@ -9,6 +11,7 @@ interface ListenerProps {
 
 export const Listener: React.FC<ListenerProps> = ({ onBack }) => {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'offline'>('idle');
+  const [firebaseLive, setFirebaseLive] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(100);
@@ -16,6 +19,21 @@ export const Listener: React.FC<ListenerProps> = ({ onBack }) => {
   const peerRef = useRef<any>(null);
   const callRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const listenerPresenceRef = useRef<any>(null);
+
+  // Sync with Firebase status
+  useEffect(() => {
+    const statusRef = ref(db, 'status/main');
+    const unsubscribe = onValue(statusRef, (snapshot) => {
+      const data = snapshot.val();
+      setFirebaseLive(data?.isLive || false);
+      if (data?.isLive === false && status === 'connected') {
+        setStatus('offline');
+        setIsPlaying(false);
+      }
+    });
+    return () => unsubscribe();
+  }, [status]);
 
   const connectToStream = () => {
     try {
@@ -28,6 +46,12 @@ export const Listener: React.FC<ListenerProps> = ({ onBack }) => {
       peerRef.current = new Peer(null, { debug: 1 });
 
       peerRef.current.on('open', (id: string) => {
+        // Register presence in Firebase
+        const presenceRef = ref(db, `listeners/${id}`);
+        listenerPresenceRef.current = presenceRef;
+        set(presenceRef, { active: true });
+        onDisconnect(presenceRef).remove();
+
         const call = peerRef.current.call(BROADCASTER_ID, new MediaStream());
         callRef.current = call;
 
@@ -85,6 +109,7 @@ export const Listener: React.FC<ListenerProps> = ({ onBack }) => {
     return () => {
       if (callRef.current) callRef.current.close();
       if (peerRef.current) peerRef.current.destroy();
+      if (listenerPresenceRef.current) set(listenerPresenceRef.current, null);
     };
   }, []);
 
@@ -107,25 +132,42 @@ export const Listener: React.FC<ListenerProps> = ({ onBack }) => {
                         <rect x="62" y="70" width="8" height="20" rx="4" className="fill-[#1A1A3F]" />
                     </svg>
                 </div>
-                {/* Text removed from logo banner as requested */}
             </div>
         </div>
 
         <div className="p-10">
           <audio ref={audioRef} className="hidden" />
 
-          {/* Use status !== 'connected' to resolve TS overlap error by including 'connecting' in the Narrowed type */}
           {status !== 'connected' ? (
             <div className="text-center py-6">
-              <p className="text-slate-400 mb-10 text-sm font-medium uppercase tracking-widest italic leading-loose">
-                "striving towards the rebirth of <br/> apostolic christianity"
-              </p>
+              <div className="mb-6 flex flex-col items-center">
+                {firebaseLive === true ? (
+                  <div className="flex items-center space-x-2 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100 mb-4 animate-bounce">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></span>
+                    <span className="text-xs font-black text-emerald-600 uppercase tracking-widest">Live Now</span>
+                  </div>
+                ) : firebaseLive === false ? (
+                  <div className="flex items-center space-x-2 bg-slate-50 px-4 py-2 rounded-full border border-slate-100 mb-4">
+                    <span className="w-2 h-2 bg-slate-300 rounded-full"></span>
+                    <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Offline</span>
+                  </div>
+                ) : (
+                  <div className="h-8 mb-4"></div>
+                )}
+                
+                <p className="text-slate-400 text-sm font-medium uppercase tracking-widest italic leading-loose">
+                  "striving towards the rebirth of <br/> apostolic christianity"
+                </p>
+              </div>
+
               <button
                 onClick={connectToStream}
-                disabled={status === 'connecting'}
-                className="w-full py-5 bg-rcn-navy hover:bg-slate-800 text-white rounded-2xl font-black text-lg transition-all shadow-xl shadow-blue-900/10 disabled:opacity-50"
+                disabled={status === 'connecting' || firebaseLive === false}
+                className={`w-full py-5 rounded-2xl font-black text-lg transition-all shadow-xl shadow-blue-900/10 disabled:opacity-50 ${
+                  firebaseLive === true ? 'bg-rcn-navy text-white hover:bg-slate-800' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                }`}
               >
-                {status === 'connecting' ? 'SYNCING...' : 'ENTER STREAM'}
+                {status === 'connecting' ? 'SYNCING...' : firebaseLive === false ? 'WAITING FOR BROADCAST' : 'ENTER STREAM'}
               </button>
               {error && <p className="mt-6 text-rcn-orange text-xs font-bold uppercase tracking-wider">{error}</p>}
             </div>

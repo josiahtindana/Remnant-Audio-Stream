@@ -3,11 +3,21 @@ import React, { useState, useEffect } from 'react';
 import { Broadcaster } from './components/Broadcaster';
 import { Listener } from './components/Listener';
 import { Layout } from './components/Layout';
+import { db } from './firebase';
+import { ref, onValue } from 'firebase/database';
 
 const App: React.FC = () => {
   const [view, setView] = useState<'home' | 'broadcaster' | 'listener'>('home');
+  const [isLive, setIsLive] = useState(false);
 
   useEffect(() => {
+    // Listen for live status from Firebase
+    const statusRef = ref(db, 'status/main');
+    const unsubscribe = onValue(statusRef, (snapshot) => {
+      const data = snapshot.val();
+      setIsLive(data?.isLive || false);
+    });
+
     const handleHashChange = () => {
       const hash = window.location.hash;
       if (hash === '#broadcaster') setView('broadcaster');
@@ -17,7 +27,11 @@ const App: React.FC = () => {
 
     window.addEventListener('hashchange', handleHashChange);
     handleHashChange();
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      unsubscribe();
+    };
   }, []);
 
   const renderContent = () => {
@@ -43,6 +57,12 @@ const App: React.FC = () => {
                 onClick={() => window.location.hash = 'listener'}
                 className="group relative overflow-hidden p-10 bg-white border border-slate-200 rounded-3xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all flex flex-col items-center text-center space-y-6"
               >
+                {isLive && (
+                  <div className="absolute top-4 left-4 flex items-center space-x-2 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                    <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Live Now</span>
+                  </div>
+                )}
                 <div className="absolute top-0 right-0 w-32 h-32 bg-rcn-orange/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
                 <div className="w-20 h-20 bg-rcn-navy text-white rounded-2xl flex items-center justify-center transform transition-transform group-hover:rotate-6">
                   <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 11v3a4 4 0 0 0 4 4h12 a4 4 0 0 0 4-4v-3"/><path d="M12 4a8 8 0 0 0-8 8v3h16v-3a8 8 0 0 0-8-8Z"/><circle cx="12" cy="12" r="2"/></svg>

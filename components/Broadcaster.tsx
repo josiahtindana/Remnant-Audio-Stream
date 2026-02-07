@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { StreamStatus } from '../types';
+import { db } from '../firebase';
+import { ref, set, onDisconnect, onValue, serverTimestamp } from 'firebase/database';
 
 const BROADCASTER_ID = 'rcn-ghana-main-stream';
 const ADMIN_PASSCODE = 'Remnant2025';
@@ -19,6 +21,22 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
   const peerRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const connectionsRef = useRef<Set<any>>(new Set());
+
+  // Listen for Firebase listener count
+  useEffect(() => {
+    if (isAuthenticated) {
+      const listenerRef = ref(db, 'listeners');
+      const unsubscribe = onValue(listenerRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          setListeners(Object.keys(data).length);
+        } else {
+          setListeners(0);
+        }
+      });
+      return () => unsubscribe();
+    }
+  }, [isAuthenticated]);
 
   const handleAuth = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,8 +69,17 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
 
       peerRef.current = new Peer(BROADCASTER_ID, { debug: 1 });
 
-      peerRef.current.on('open', (id: string) => {
+      peerRef.current.on('open', async (id: string) => {
         setStatus('live');
+        // Update Firebase Status
+        const statusRef = ref(db, 'status/main');
+        await set(statusRef, {
+          isLive: true,
+          startedAt: serverTimestamp(),
+          broadcasterId: id
+        });
+        // Set disconnect handler
+        onDisconnect(statusRef).set({ isLive: false });
       });
 
       peerRef.current.on('error', (err: any) => {
@@ -67,10 +94,8 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       peerRef.current.on('call', (call: any) => {
         call.answer(streamRef.current!);
         connectionsRef.current.add(call);
-        setListeners(prev => prev + 1);
         call.on('close', () => {
           connectionsRef.current.delete(call);
-          setListeners(prev => Math.max(0, prev - 1));
         });
       });
 
@@ -80,7 +105,7 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
     }
   };
 
-  const stopStream = () => {
+  const stopStream = async () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -90,7 +115,10 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       peerRef.current = null;
     }
     connectionsRef.current.clear();
-    setListeners(0);
+    
+    // Update Firebase Status
+    await set(ref(db, 'status/main'), { isLive: false });
+    
     setStatus('idle');
   };
 
@@ -101,7 +129,11 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       script.async = true;
       document.body.appendChild(script);
     }
-    return () => stopStream();
+    // Fix: useEffect cleanup function must not return a Promise.
+    // stopStream is async, so we wrap it in a block to ensure the cleanup returns void.
+    return () => {
+      stopStream();
+    };
   }, []);
 
   if (!isAuthenticated) {
@@ -170,7 +202,7 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
           <div className="grid grid-cols-2 gap-4 mb-10">
             <div className="bg-slate-50 rounded-2xl p-6 text-center border border-slate-100">
               <span className="block text-3xl font-bold text-rcn-navy">{listeners}</span>
-              <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Live Listeners</span>
+              <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Total Listeners</span>
             </div>
             <div className="bg-slate-50 rounded-2xl p-6 text-center border border-slate-100">
               <span className="block text-3xl font-bold text-rcn-navy">HQ</span>
