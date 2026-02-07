@@ -22,17 +22,12 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
   const streamRef = useRef<MediaStream | null>(null);
   const connectionsRef = useRef<Set<any>>(new Set());
 
-  // Listen for Firebase listener count
   useEffect(() => {
     if (isAuthenticated) {
       const listenerRef = ref(db, 'listeners');
       const unsubscribe = onValue(listenerRef, (snapshot) => {
         const data = snapshot.val();
-        if (data) {
-          setListeners(Object.keys(data).length);
-        } else {
-          setListeners(0);
-        }
+        setListeners(data ? Object.keys(data).length : 0);
       });
       return () => unsubscribe();
     }
@@ -63,22 +58,18 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       streamRef.current = stream;
 
       const Peer = (window as any).Peer;
-      if (!Peer) {
-        throw new Error('Streaming engine not initialized.');
-      }
+      if (!Peer) throw new Error('Streaming engine not initialized.');
 
       peerRef.current = new Peer(BROADCASTER_ID, { debug: 1 });
 
       peerRef.current.on('open', async (id: string) => {
         setStatus('live');
-        // Update Firebase Status
         const statusRef = ref(db, 'status/main');
         await set(statusRef, {
           isLive: true,
           startedAt: serverTimestamp(),
           broadcasterId: id
         });
-        // Set disconnect handler
         onDisconnect(statusRef).set({ isLive: false });
       });
 
@@ -94,9 +85,7 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       peerRef.current.on('call', (call: any) => {
         call.answer(streamRef.current!);
         connectionsRef.current.add(call);
-        call.on('close', () => {
-          connectionsRef.current.delete(call);
-        });
+        call.on('close', () => connectionsRef.current.delete(call));
       });
 
     } catch (err: any) {
@@ -106,19 +95,22 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
   };
 
   const stopStream = async () => {
+    // 1. Stop all microphone tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    
+    // 2. Destroy PeerJS instance (closes all connections)
     if (peerRef.current) {
       peerRef.current.destroy();
       peerRef.current = null;
     }
-    connectionsRef.current.clear();
     
-    // Update Firebase Status
+    // 3. Update Firebase status
     await set(ref(db, 'status/main'), { isLive: false });
     
+    connectionsRef.current.clear();
     setStatus('idle');
   };
 
@@ -129,8 +121,6 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
       script.async = true;
       document.body.appendChild(script);
     }
-    // Fix: useEffect cleanup function must not return a Promise.
-    // stopStream is async, so we wrap it in a block to ensure the cleanup returns void.
     return () => {
       stopStream();
     };
@@ -148,27 +138,25 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
             <p className="text-slate-500 text-sm mt-1">Authorized access only for RCN Ghana.</p>
           </div>
           <form onSubmit={handleAuth} className="space-y-4">
-            <div>
-              <input
-                type="password"
-                value={passcode}
-                onChange={(e) => setPasscode(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rcn-orange focus:border-rcn-orange outline-none transition-all text-center text-lg tracking-widest"
-                placeholder="PASSCODE"
-                required
-              />
-            </div>
+            <input
+              type="password"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rcn-orange outline-none transition-all text-center text-lg tracking-widest"
+              placeholder="PASSCODE"
+              required
+            />
             {error && <p className="text-red-500 text-xs text-center font-bold">{error}</p>}
             <button
               type="submit"
-              className="w-full py-3 bg-rcn-navy text-white rounded-xl hover:bg-slate-800 transition-colors font-bold uppercase tracking-widest shadow-lg shadow-blue-900/10"
+              className="w-full py-3 bg-rcn-navy text-white rounded-xl hover:bg-slate-800 transition-colors font-bold uppercase tracking-widest shadow-lg"
             >
               Unlock Terminal
             </button>
             <button
               type="button"
               onClick={onBack}
-              className="w-full py-2 text-slate-400 text-xs font-bold uppercase hover:text-slate-600 transition-colors"
+              className="w-full py-2 text-slate-400 text-xs font-bold uppercase hover:text-slate-600"
             >
               Cancel
             </button>
@@ -189,14 +177,14 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
                 {status === 'live' ? 'Live on Air' : status === 'starting' ? 'Preparing...' : 'System Idle'}
               </span>
             </div>
-            <button onClick={onBack} className="text-slate-300 hover:text-rcn-navy transition-colors">
+            <button onClick={() => { stopStream(); onBack(); }} className="text-slate-300 hover:text-rcn-navy">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
           </div>
 
           <div className="text-center mb-10">
             <h2 className="text-4xl font-bold text-rcn-navy mb-2">Broadcast Console</h2>
-            <p className="text-slate-400 font-medium">Global Network Audio Transmission</p>
+            <p className="text-slate-400 font-medium italic">Global Apostolic Network</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4 mb-10">
@@ -217,7 +205,7 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
               <button
                 onClick={startStream}
                 disabled={status === 'starting'}
-                className="w-full py-5 bg-rcn-orange hover:bg-orange-600 text-white rounded-2xl font-black text-xl shadow-xl shadow-orange-200 transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
+                className="w-full py-5 bg-rcn-orange hover:bg-orange-600 text-white rounded-2xl font-black text-xl shadow-xl transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
                 <span>{status === 'starting' ? 'ENGAGING...' : 'START BROADCAST'}</span>
@@ -225,7 +213,7 @@ export const Broadcaster: React.FC<BroadcasterProps> = ({ onBack }) => {
             ) : (
               <button
                 onClick={stopStream}
-                className="w-full py-5 bg-rcn-navy hover:bg-slate-800 text-white rounded-2xl font-black text-xl shadow-xl shadow-blue-900/20 transition-all flex items-center justify-center space-x-3"
+                className="w-full py-5 bg-rcn-navy hover:bg-slate-800 text-white rounded-2xl font-black text-xl shadow-xl transition-all flex items-center justify-center space-x-3"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="5" y="5" rx="2" ry="2"/></svg>
                 <span>END TRANSMISSION</span>
