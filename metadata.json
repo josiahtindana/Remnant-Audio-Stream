@@ -1,0 +1,7 @@
+{
+  "name": "Remnant Audio Stream",
+  "description": "The official live audio streaming platform for Remnant Christian Network Ghana.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
